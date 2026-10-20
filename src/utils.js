@@ -169,9 +169,13 @@ export function isGuestMode() {
       if (parsed?.data?.guest === true) {
         return (cachedGuestMode = true);
       }
+      if (parsed?.data && parsed.data.guest === false) {
+        return (cachedGuestMode = false);
+      }
     }
     
-    return (cachedGuestMode = false);
+    // If no last-identity-used is stored at all, no account is signed in (default to Guest mode)
+    return (cachedGuestMode = true);
   } catch {
     return (cachedGuestMode = false);
   }

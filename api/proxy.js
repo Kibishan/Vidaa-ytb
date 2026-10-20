@@ -70,6 +70,9 @@ function buildClientBootstrapScript(nonceAttr) {
       recObj.data.data[k] = { timesFired: 1, earliestKnownTime: now, lastFired: future, dailiesBitSet: 1, dailiesTimestamp: now };
     }
     localStorage.setItem(recKey, JSON.stringify(recObj));
+    if (!localStorage.getItem("yt.leanback.default::last-identity-used") && !localStorage.getItem("yt.leanback.default::AUTONAV_FOR_LIVING_ROOM")) {
+      localStorage.setItem("yt.leanback.default::AUTONAV_FOR_LIVING_ROOM", JSON.stringify({ data: { guest: true } }));
+    }
   } catch (e) {}
 
   if (!window.location.hash || window.location.hash === "#") {
@@ -105,12 +108,32 @@ function buildClientBootstrapScript(nonceAttr) {
     "m.youtube.com": true
   };
 
+  function shouldProxyCorsHost(hostname) {
+    if (!hostname) return false;
+    if (CORS_PROXY_HOSTS[hostname]) return true;
+    if (
+      hostname.endsWith(".googlevideo.com") ||
+      hostname.endsWith(".c.youtube.com") ||
+      hostname.endsWith(".gstatic.com") ||
+      hostname.endsWith(".ggpht.com") ||
+      hostname.endsWith(".googleusercontent.com") ||
+      hostname.endsWith(".ytimg.com")
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   function rewriteRequestUrl(rawUrl) {
     if (!rawUrl || typeof rawUrl !== "string") return rawUrl;
     if (rawUrl.indexOf("/cors-bypass/") === 0 || rawUrl.indexOf("data:") === 0 || rawUrl.indexOf("blob:") === 0) {
       return rawUrl;
     }
-    if (rawUrl.indexOf("/eligibility_check") !== -1 || rawUrl.indexOf("panelresearch.googlevideo.com") !== -1) {
+    if (
+      rawUrl.indexOf("/eligibility_check") !== -1 ||
+      rawUrl.indexOf("panelresearch.googlevideo.com") !== -1 ||
+      rawUrl.indexOf("doubleclick.net") !== -1
+    ) {
       return "data:application/json,{}";
     }
     var normalized = rawUrl.indexOf("//") === 0 ? window.location.protocol + rawUrl : rawUrl;
@@ -125,7 +148,7 @@ function buildClientBootstrapScript(nonceAttr) {
       if (parsed.host === window.location.host || SAME_ORIGIN_YT_HOSTS[parsed.hostname]) {
         return parsed.pathname + parsed.search + parsed.hash;
       }
-      if (CORS_PROXY_HOSTS[parsed.hostname]) {
+      if (shouldProxyCorsHost(parsed.hostname)) {
         return "/cors-bypass/" + encodeURIComponent(parsed.toString());
       }
     } catch (e) {}
@@ -133,6 +156,37 @@ function buildClientBootstrapScript(nonceAttr) {
   }
 
   window.__rewriteYoutubeVidaaUrl = rewriteRequestUrl;
+
+  if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+    var origBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = function (url, data) {
+      try {
+        if (typeof url === "string") {
+          url = rewriteRequestUrl(url);
+        }
+      } catch (e) {}
+      return origBeacon(url, data);
+    };
+  }
+
+  if (typeof window.Request === "function") {
+    var OrigRequest = window.Request;
+    var PatchedRequest = function (input, init) {
+      try {
+        if (typeof input === "string") {
+          input = rewriteRequestUrl(input);
+        } else if (input && typeof URL !== "undefined" && input instanceof URL) {
+          input = rewriteRequestUrl(input.toString());
+        }
+      } catch (e) {}
+      if (arguments.length > 1) {
+        return new OrigRequest(input, init);
+      }
+      return new OrigRequest(input);
+    };
+    PatchedRequest.prototype = OrigRequest.prototype;
+    window.Request = PatchedRequest;
+  }
 
   if (typeof window.fetch === "function") {
     var origFetch = window.fetch.bind(window);
@@ -142,10 +196,22 @@ function buildClientBootstrapScript(nonceAttr) {
           input = rewriteRequestUrl(input);
         } else if (input && typeof URL !== "undefined" && input instanceof URL) {
           input = rewriteRequestUrl(input.toString());
-        } else if (typeof Request !== "undefined" && input instanceof Request) {
+        } else if (typeof OrigRequest !== "undefined" && input instanceof OrigRequest) {
           var rewritten = rewriteRequestUrl(input.url);
           if (rewritten !== input.url) {
-            input = new Request(rewritten, input);
+            return input.arrayBuffer().then(function (buf) {
+              return origFetch(rewritten, {
+                method: input.method,
+                headers: input.headers,
+                body: input.method !== "GET" && input.method !== "HEAD" && buf.byteLength ? buf : undefined,
+                credentials: input.credentials,
+                mode: input.mode,
+                cache: input.cache,
+                redirect: input.redirect,
+                referrer: input.referrer,
+                signal: (init && init.signal) || input.signal
+              });
+            });
           }
         }
       } catch (e) {}
@@ -197,16 +263,32 @@ function tryServeStaticFile(pathname, res) {
 }
 
 /**
+ * Désactive le bodyParser automatique de Vercel pour préserver les corps binaires (SABR/protobuf) et form-urlencoded
+ */
+export const config = {
+  api: {
+    bodyParser: false
+  }
+};
+
+/**
  * Lit le corps brut de la requête entrante
  */
 async function readRequestBody(req) {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
     return undefined;
   }
-  if (req.body) {
+  if (req.body !== undefined && req.body !== null) {
     if (Buffer.isBuffer(req.body)) return req.body;
+    if (req.body instanceof Uint8Array) return Buffer.from(req.body);
     if (typeof req.body === 'string') return Buffer.from(req.body);
-    if (typeof req.body === 'object') return Buffer.from(JSON.stringify(req.body));
+    if (typeof req.body === 'object') {
+      const ct = (req.headers['content-type'] || '').toLowerCase();
+      if (ct.includes('application/x-www-form-urlencoded')) {
+        return Buffer.from(new URLSearchParams(req.body).toString());
+      }
+      return Buffer.from(JSON.stringify(req.body));
+    }
   }
   const chunks = [];
   for await (const chunk of req) {
@@ -232,8 +314,8 @@ function resolveUpstreamUrl(reqUrl) {
     }
     // Correction si le serveur a fusionné https:// en https:/
     rawTarget = rawTarget.replace(/^(https?):\/([^/])/, '$1://$2');
-    if (parsed.search && !rawTarget.includes('?')) {
-      rawTarget += parsed.search;
+    if (parsed.search) {
+      rawTarget += (rawTarget.includes('?') ? '&' : '?') + parsed.search.slice(1);
     }
     return { targetUrl: new URL(rawTarget), isTvHtmlEntry: false };
   }
@@ -257,6 +339,9 @@ function resolveUpstreamUrl(reqUrl) {
 
   // 4. Toutes les autres routes YouTube (/youtubei/*, /s/*, /api/*, etc.)
   const targetUrl = new URL(pathname + parsed.search, YT_ORIGIN);
+  if (pathname.startsWith('/s/')) {
+    targetUrl.searchParams.delete('_cb');
+  }
   return { targetUrl, isTvHtmlEntry: false };
 }
 
@@ -271,6 +356,7 @@ export default async function handleProxyRequest(req, res) {
     res.statusCode = 200;
     res.setHeader('Access-Control-Allow-Origin', reqOrigin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Alt-Svc', 'clear');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, HEAD');
     res.setHeader(
       'Access-Control-Allow-Headers',
@@ -361,7 +447,31 @@ export default async function handleProxyRequest(req, res) {
   }
 
   try {
-    const body = await readRequestBody(req);
+    let body = await readRequestBody(req);
+
+    // Normalisation du payload /youtubei/v1/player et /youtubei/v1/next pour éviter CONTENT_CHECK_REQUIRED ("demandée en dehors de l'application YouTube")
+    if (
+      body &&
+      req.method === 'POST' &&
+      (pathname.startsWith('/youtubei/v1/player') || pathname.startsWith('/youtubei/v1/next'))
+    ) {
+      try {
+        const json = JSON.parse(body.toString('utf8'));
+        json.contentCheckOk = true;
+        json.racyCheckOk = true;
+        if (json.playbackContext && json.playbackContext.contentPlaybackContext) {
+          json.playbackContext.contentPlaybackContext.referer = YT_TV_URL;
+          delete json.playbackContext.contentPlaybackContext.isLivingRoomDeeplink;
+        }
+        if (json.context && json.context.client) {
+          json.context.client.originalUrl = YT_TV_URL;
+        }
+        body = Buffer.from(JSON.stringify(json), 'utf8');
+      } catch {
+        // Ignorer si le corps n'est pas du JSON valide
+      }
+    }
+
     const isCorsBypass = pathname.startsWith('/cors-bypass/');
     const upstreamRes = await fetch(targetUrl.toString(), {
       method: req.method,
@@ -402,7 +512,12 @@ export default async function handleProxyRequest(req, res) {
       'cross-origin-opener-policy',
       'cross-origin-embedder-policy',
       'cross-origin-resource-policy',
-      'set-cookie'
+      'set-cookie',
+      'alt-svc',
+      'access-control-allow-origin',
+      'access-control-allow-credentials',
+      'access-control-allow-methods',
+      'access-control-allow-headers'
     ]);
 
     upstreamRes.headers.forEach((value, key) => {
@@ -440,12 +555,19 @@ export default async function handleProxyRequest(req, res) {
 
     res.setHeader('Access-Control-Allow-Origin', reqOrigin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Alt-Svc', 'clear');
 
     const contentType = (upstreamRes.headers.get('content-type') || '').toLowerCase();
 
-    // 1. Transformation du HTML de YouTube TV (/tv)
-    if (isTvHtmlEntry || contentType.includes('text/html')) {
+    // 1. Transformation du HTML de YouTube TV (/tv uniquement)
+    if (isTvHtmlEntry) {
       let html = await upstreamRes.text();
+      // Cache-buster sur la feuille de style CSS principale pour invalider tout ancien cache CDN/navigateur
+      html = html.replace(
+        /href="(\/s\/_\/kabuki\/_\/ss\/[^"?]+)"/g,
+        'href="$1?_cb=vidaa2"'
+      );
+
       const nonceMatch = html.match(/<script[^>]+nonce="([^"]+)"/i);
       const nonceAttr = nonceMatch ? ` nonce="${nonceMatch[1]}"` : '';
 
@@ -506,9 +628,11 @@ export default async function handleProxyRequest(req, res) {
       return;
     }
 
-    // 3. Réponse binaire ou JSON brute
+    // 4. Réponse binaire ou JSON brute (avec Content-Length explicite pour SABR/videoplayback)
     const arrayBuffer = await upstreamRes.arrayBuffer();
-    res.end(Buffer.from(arrayBuffer));
+    const buf = Buffer.from(arrayBuffer);
+    res.setHeader('Content-Length', String(buf.length));
+    res.end(buf);
   } catch (err) {
     console.error('[VIDAA Proxy Error]', err);
     res.statusCode = 502;
