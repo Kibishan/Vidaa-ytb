@@ -157,6 +157,39 @@ function buildClientBootstrapScript(nonceAttr) {
 
   window.__rewriteYoutubeVidaaUrl = rewriteRequestUrl;
 
+  try {
+    if (typeof HTMLLinkElement !== "undefined") {
+      var linkDesc = Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype, "href");
+      if (linkDesc && linkDesc.set) {
+        Object.defineProperty(HTMLLinkElement.prototype, "href", {
+          get: linkDesc.get,
+          set: function (val) {
+            if (typeof val === "string" && val.indexOf("/s/_/kabuki/_/ss/") !== -1 && val.indexOf("_cb=") === -1) {
+              val += (val.indexOf("?") === -1 ? "?" : "&") + "_cb=vidaa2";
+            }
+            return linkDesc.set.call(this, val);
+          },
+          configurable: true
+        });
+      }
+    }
+    if (typeof Element !== "undefined" && Element.prototype.setAttribute) {
+      var origSetAttr = Element.prototype.setAttribute;
+      Element.prototype.setAttribute = function (name, val) {
+        if (
+          name &&
+          name.toLowerCase() === "href" &&
+          typeof val === "string" &&
+          val.indexOf("/s/_/kabuki/_/ss/") !== -1 &&
+          val.indexOf("_cb=") === -1
+        ) {
+          val += (val.indexOf("?") === -1 ? "?" : "&") + "_cb=vidaa2";
+        }
+        return origSetAttr.call(this, name, val);
+      };
+    }
+  } catch (e) {}
+
   if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
     var origBeacon = navigator.sendBeacon.bind(navigator);
     navigator.sendBeacon = function (url, data) {
