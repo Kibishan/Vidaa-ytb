@@ -1,0 +1,23 @@
+{
+  "name": "YouTube Extended (VIDAA)",
+  "short_name": "YouTube",
+  "description": "YouTube TV sans publicité avec SponsorBlock pour Hisense VIDAA OS et LG webOS",
+  "start_url": "./vidaa.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0f0f0f",
+  "theme_color": "#0f0f0f",
+  "icons": [
+    {
+      "src": "./icon.png",
+      "sizes": "80x80",
+      "type": "image/png"
+    },
+    {
+      "src": "./largeIcon.png",
+      "sizes": "130x130",
+      "type": "image/png"
+    }
+  ]
+}

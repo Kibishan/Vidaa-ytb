@@ -541,7 +541,7 @@ function createOptionsPanel() {
       }
     } else if (evt.keyCode === REMOTE_KEYS.ENTER.code) {
       if (evt instanceof KeyboardEvent) document.activeElement.click();
-    } else if (evt.keyCode === 27) { // Escape
+    } else if (evt.keyCode === 27 || evt.keyCode === 8 || evt.keyCode === 461 || evt.keyCode === 10009) { // Escape / VIDAA Back / webOS Back
       showOptionsPanel(false);
     }
     evt.preventDefault(); evt.stopPropagation();

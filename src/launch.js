@@ -26,8 +26,26 @@ export function extractLaunchParams() {
   return (cachedLaunchParams = {});
 }
 
+function isVidaaRuntime() {
+  if (typeof window === 'undefined') return false;
+  const search = window.location ? window.location.search || '' : '';
+  const pathname = window.location ? window.location.pathname || '' : '';
+  return (
+    window.__NUVIO_PLATFORM__ === 'vidaa' ||
+    window.__YOUTUBE_PLATFORM__ === 'vidaa' ||
+    pathname.indexOf('vidaa.html') !== -1 ||
+    search.indexOf('platform=vidaa') !== -1 ||
+    search.indexOf('wrapper=vidaa') !== -1 ||
+    (window.location.hostname !== 'www.youtube.com' &&
+      typeof window.PalmSystem === 'undefined')
+  );
+}
+
 function getYTURL() {
-  const ytURL = new URL('https://www.youtube.com/tv#/');
+  const baseHref = isVidaaRuntime()
+    ? `${window.location.origin}/tv?platform=vidaa#/`
+    : 'https://www.youtube.com/tv#/';
+  const ytURL = new URL(baseHref);
   ytURL.searchParams.set('env_forceFullAnimation', '1');
   ytURL.searchParams.set('env_enableWebSpeech', '1');
   ytURL.searchParams.set('env_enableVoice', '1');
@@ -87,5 +105,9 @@ export function handleLaunch(params) {
     ytURL.searchParams.delete('env_enableVoice');
   }
 
-  window.location.href = ytURL.toString();
+  if (isVidaaRuntime()) {
+    window.location.replace(ytURL.toString());
+  } else {
+    window.location.href = ytURL.toString();
+  }
 }

@@ -15,7 +15,8 @@ export const SELECTORS = {
 
 export const REMOTE_KEYS = {
   ENTER:  { code: 13,  key: 'Enter' },
-  BACK:   { code: 461, key: 'Back' },
+  BACK:   { code: 461, key: 'Back', alt: [8, 27, 10009] },
+  ESCAPE: { code: 27,  key: 'Escape' },
   LEFT:   { code: 37,  key: 'ArrowLeft' },
   UP:     { code: 38,  key: 'ArrowUp' },
   RIGHT:  { code: 39,  key: 'ArrowRight' },
@@ -209,9 +210,18 @@ export function sendKey(keyDef, target = document.body) {
       return; 
   }
 
+  // On VIDAA OS / non-webOS TVHTML5 environments, YouTube TV (kabuki) maps
+  // Escape (27) to Back rather than LG webOS's 461.
+  const effectiveKeyDef =
+    keyDef === REMOTE_KEYS.BACK &&
+    typeof window !== 'undefined' &&
+    typeof window.PalmSystem === 'undefined'
+      ? REMOTE_KEYS.ESCAPE
+      : keyDef;
+
   const eventOpts = {
     bubbles: true, cancelable: false, composed: true, view: window,
-    key: keyDef.key, code: keyDef.key, keyCode: keyDef.code, which: keyDef.code, charCode: keyDef.charCode || 0
+    key: effectiveKeyDef.key, code: effectiveKeyDef.key, keyCode: effectiveKeyDef.code, which: effectiveKeyDef.code, charCode: effectiveKeyDef.charCode || 0
   };
 
   const keyDownEvt = createEventStrategy('keydown', eventOpts);
@@ -225,9 +235,11 @@ export function sendKey(keyDef, target = document.body) {
   // treat screensaver-fix's 30s keep-alive burst as a user pressing a button.
   keyDownEvt[SYNTHETIC_KEY_FLAG] = true;
   keyUpEvt[SYNTHETIC_KEY_FLAG] = true;
+  keyDownEvt.__vidaaNormalized = true;
+  keyUpEvt.__vidaaNormalized = true;
 
-  const codeDesc = createDescriptor(keyDef.code);
-  const charDesc = createDescriptor(keyDef.charCode || 0);
+  const codeDesc = createDescriptor(effectiveKeyDef.code);
+  const charDesc = createDescriptor(effectiveKeyDef.charCode || 0);
 
   Object.defineProperties(keyDownEvt, { keyCode: codeDesc, which: codeDesc, charCode: charDesc });
   Object.defineProperties(keyUpEvt,   { keyCode: codeDesc, which: codeDesc, charCode: charDesc });

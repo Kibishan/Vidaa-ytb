@@ -12,6 +12,8 @@
     "build:dev": "webpack --mode=development",
     "build:dev:inspect": "npm run build:dev && npm run package && npm run deploy && npm run inspect",
     "package": "ares-package -n dist -o dist",
+    "package:vidaa": "node scripts/package-vidaa.mjs",
+    "serve:vidaa": "node scripts/serve-vidaa.mjs",
     "deploy": "node tools/deploy.js",
     "inspect": "ares-inspect youtube.leanback.v4",
     "launch": "ares-launch youtube.leanback.v4",

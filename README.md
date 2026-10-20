@@ -1,6 +1,11 @@
-# youtube-webos
+# youtube-webos (Compatible Hisense VIDAA OS & LG webOS)
 
-An upgraded fork of webosbrew's youtube-webos with extended features and fixes.
+An upgraded fork of webosbrew's youtube-webos with extended features, fixes, and full **Hisense VIDAA OS** support (`vidaa.html` / Vercel / Sidee).
+
+## Support Hisense VIDAA OS (`vidaa.html`)
+- **Déploiement Vercel prêt à l'emploi** (`vercel.json` + `npm run package:vidaa` + `/api/proxy`) : ouvrez `https://<votre-domaine>.vercel.app/vidaa.html` dans le navigateur de votre TV VIDAA ou installez-le sur l'écran d'accueil via [Sidee](https://github.com/Empi9245/Sidee).
+- **Serveur local LAN** : lancez `npm run package:vidaa && npm run serve:vidaa` puis ouvrez `http://<IP_LOCALE>:3000/vidaa.html` sur votre téléviseur.
+- **Adaptateur VIDAA OS complet** (`src/vidaa-support.js`) : viewport `1920x1080`, normalisation de la touche Retour VIDAA (`8` / `461` / `10009` -> `Escape`), touches avance/retour rapide (`427` / `428`), correctif clavier virtuel VIDAA et installateur `Hisense_installApp` (`installer/`).
 
 ## Added Features
 - Full support for webOS 3, 4, 5, 6, 22, 23, 24, and 25 (2016 and newer LG TVs) (webOS 1 and 2 currently not supported)

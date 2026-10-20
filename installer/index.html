@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=1920, height=1080, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Installateur YouTube Extended pour Hisense VIDAA OS</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 48px;
+        background: #0f0f0f;
+        color: #f1f1f1;
+        font-family: Roboto, Arial, sans-serif;
+      }
+      .card {
+        max-width: 960px;
+        margin: 0 auto;
+        background: #1a1a1a;
+        border: 1px solid #303030;
+        border-radius: 20px;
+        padding: 40px;
+      }
+      h1 {
+        margin-top: 0;
+        font-size: 36px;
+        color: #ffffff;
+      }
+      p {
+        font-size: 20px;
+        line-height: 1.5;
+        color: #cccccc;
+      }
+      .field {
+        margin: 24px 0;
+      }
+      label {
+        display: block;
+        font-size: 18px;
+        margin-bottom: 8px;
+        color: #aaaaaa;
+      }
+      input[type="text"] {
+        width: 100%;
+        padding: 16px;
+        font-size: 22px;
+        border-radius: 12px;
+        border: 2px solid #3a3a3a;
+        background: #111111;
+        color: #ffffff;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        margin-top: 28px;
+      }
+      button,
+      a.btn {
+        padding: 18px 28px;
+        font-size: 22px;
+        font-weight: 600;
+        border-radius: 12px;
+        border: 2px solid transparent;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-block;
+      }
+      button:focus,
+      a.btn:focus,
+      input:focus {
+        outline: none;
+        border-color: #ffffff !important;
+        box-shadow: 0 0 0 4px rgba(255, 0, 51, 0.5);
+      }
+      .btn-primary {
+        background: #ff0033;
+        color: #ffffff;
+      }
+      .btn-secondary {
+        background: #2b2b2b;
+        color: #ffffff;
+      }
+      #status {
+        margin-top: 28px;
+        padding: 18px;
+        border-radius: 12px;
+        background: #121212;
+        border: 1px solid #2c2c2c;
+        font-family: monospace;
+        font-size: 18px;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>YouTube Extended (AdBlock + SponsorBlock) — VIDAA OS</h1>
+      <p>
+        Installez l’application sur l’écran d’accueil de votre téléviseur Hisense VIDAA OS
+        ou ouvrez directement <strong>vidaa.html</strong>.
+      </p>
+
+      <div class="field">
+        <label for="appUrl">URL de lancement (vidaa.html) :</label>
+        <input id="appUrl" type="text" value="" />
+      </div>
+
+      <div class="actions">
+        <a id="openDirectBtn" class="btn btn-primary" href="../vidaa.html">
+          Ouvrir YouTube VIDAA maintenant
+        </a>
+        <button id="installBtn" class="btn btn-secondary" type="button">
+          Installer sur VIDAA (Hisense_installApp)
+        </button>
+        <button id="uninstallBtn" class="btn btn-secondary" type="button">
+          Désinstaller de VIDAA
+        </button>
+      </div>
+
+      <div id="status">Vérification de l’environnement VIDAA OS...</div>
+    </div>
+
+    <script>
+      (function () {
+        var defaultUrl = new URL("../vidaa.html", window.location.href).href;
+        var input = document.getElementById("appUrl");
+        var openDirectBtn = document.getElementById("openDirectBtn");
+        var statusEl = document.getElementById("status");
+        input.value = defaultUrl;
+
+        function logStatus(msg) {
+          statusEl.textContent = msg;
+        }
+
+        var hasInstallApi = typeof window.Hisense_installApp === "function";
+        var hasUninstallApi = typeof window.Hisense_uninstallApp === "function";
+
+        logStatus(
+          "User-Agent : " +
+            navigator.userAgent +
+            "\nHisense_installApp disponible : " +
+            (hasInstallApi ? "OUI" : "NON (utilisez Sidee ou ouvrez directement vidaa.html)")
+        );
+
+        input.addEventListener("input", function () {
+          openDirectBtn.href = input.value.trim() || defaultUrl;
+        });
+
+        document.getElementById("installBtn").addEventListener("click", function () {
+          var targetUrl = input.value.trim() || defaultUrl;
+          var iconUrl = new URL("../largeIcon.png", window.location.href).href;
+          if (typeof window.Hisense_installApp !== "function") {
+            logStatus(
+              "Hisense_installApp n'est pas exposé dans ce navigateur.\n" +
+                "-> Sur VIDAA U6/U7/U8 récents, utilisez Sidee (https://github.com/Empi9245/Sidee) avec l'URL :\n" +
+                targetUrl +
+                "\n-> Ou cliquez sur 'Ouvrir YouTube VIDAA maintenant'."
+            );
+            return;
+          }
+          try {
+            window.Hisense_installApp(
+              "youtube-vidaa",
+              "YouTube Extended",
+              iconUrl,
+              iconUrl,
+              iconUrl,
+              targetUrl,
+              "store",
+              function (res) {
+                logStatus("Résultat d'installation VIDAA : " + JSON.stringify(res));
+              }
+            );
+          } catch (err) {
+            logStatus("Erreur lors de l'appel à Hisense_installApp : " + err.message);
+          }
+        });
+
+        document.getElementById("uninstallBtn").addEventListener("click", function () {
+          if (!hasUninstallApi) {
+            logStatus("Hisense_uninstallApp non disponible dans ce contexte.");
+            return;
+          }
+          try {
+            window.Hisense_uninstallApp("youtube-vidaa", function (res) {
+              logStatus("Désinstallation : " + JSON.stringify(res));
+            });
+          } catch (err) {
+            logStatus("Erreur : " + err.message);
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>

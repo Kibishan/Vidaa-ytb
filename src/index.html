@@ -1,6 +1,111 @@
 <!doctype html>
-<html>
+<html lang="fr">
   <head>
-    <script src="index.js"></script>
+    <meta charset="utf-8" />
+    <meta
+      id="app-viewport"
+      name="viewport"
+      content="width=1920, height=1080, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta name="theme-color" content="#0f0f0f" />
+    <title>YouTube TV (VIDAA / webOS)</title>
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="icon" type="image/png" href="./icon.png" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background-color: #0f0f0f;
+        color: #ffffff;
+        font-family: Roboto, Arial, sans-serif;
+        overflow: hidden;
+      }
+      html.vidaa-tv,
+      html.vidaa-tv body {
+        width: 1920px;
+        height: 1080px;
+      }
+      .vidaa-splash {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        gap: 24px;
+      }
+      .vidaa-splash img {
+        width: 120px;
+        height: 120px;
+        border-radius: 24px;
+      }
+      .vidaa-spinner {
+        width: 44px;
+        height: 44px;
+        border: 4px solid rgba(255, 255, 255, 0.16);
+        border-top-color: #ff0033;
+        border-radius: 50%;
+        animation: vidaa-spin 0.85s linear infinite;
+      }
+      @keyframes vidaa-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+    <script>
+      (function configureVidaaLaunch() {
+        var search = window.location.search || "";
+        var ua = (navigator.userAgent || "").toLowerCase();
+        var isVidaa =
+          window.__NUVIO_PLATFORM__ === "vidaa" ||
+          window.__YOUTUBE_PLATFORM__ === "vidaa" ||
+          typeof window.Hisense_GetOSVersion === "function" ||
+          typeof window.Hisense_GetFirmWareVersion === "function" ||
+          typeof window.Hisense_installApp === "function" ||
+          typeof window.Hisense_Exit === "function" ||
+          typeof window.omi_platform !== "undefined" ||
+          typeof window.opera_omi !== "undefined" ||
+          window.location.pathname.indexOf("vidaa.html") !== -1 ||
+          search.indexOf("wrapper=vidaa") !== -1 ||
+          search.indexOf("platform=vidaa") !== -1 ||
+          ua.indexOf("vidaa") !== -1 ||
+          ua.indexOf("hisense") !== -1;
+
+        if (isVidaa) {
+          window.__NUVIO_PLATFORM__ = "vidaa";
+          window.__YOUTUBE_PLATFORM__ = "vidaa";
+          document.documentElement.classList.add("vidaa-tv");
+          var vp = document.getElementById("app-viewport");
+          if (vp) {
+            vp.setAttribute(
+              "content",
+              "width=1920, height=1080, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+            );
+          }
+          if (typeof window.Hisense_AddInsecureDomain === "function") {
+            try {
+              window.Hisense_AddInsecureDomain("*");
+            } catch (e) {}
+          }
+        }
+
+        if ("serviceWorker" in navigator && window.location.protocol.indexOf("http") === 0) {
+          window.addEventListener("load", function () {
+            navigator.serviceWorker.register("./sw.js").catch(function () {});
+          });
+        }
+      })();
+    </script>
+    <script src="index.js" defer></script>
   </head>
+  <body>
+    <div class="vidaa-splash">
+      <img src="./largeIcon.png" alt="YouTube" onerror="this.style.display='none'" />
+      <div class="vidaa-spinner"></div>
+    </div>
+  </body>
 </html>

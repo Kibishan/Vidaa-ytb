@@ -5,7 +5,10 @@ import './perf_mon.js';
 import 'whatwg-fetch';
 import './polyfills.js';
 import './domrect-polyfill';
+import { initVidaaSupport } from './vidaa-support.js';
 import './adblock.js';
+
+initVidaaSupport();
 import './hooks/json-stringify';
 import './force-codec.js';
 
