@@ -127,6 +127,49 @@ export function getVideo() {
   _cachedVideo = document.querySelector('video');
   return _cachedVideo;
 }
+
+export function getPlayer() {
+  return (
+    document.getElementById(SELECTORS.PLAYER_ID) ||
+    document.querySelector('.html5-video-player')
+  );
+}
+
+/**
+ * Seeks the active video safely via YouTube TV's player API (`player.seekTo`)
+ * so that the SABR stream loader and MSE SourceBuffer flush cleanly instead of
+ * triggering conflicting native `<video>` seeking events on VIDAA OS.
+ */
+export function seekVideoTo(targetTime, video = getVideo()) {
+  if (typeof targetTime !== 'number' || !isFinite(targetTime)) return false;
+  let clampedTime = Math.max(0, targetTime);
+
+  if (video && typeof video.duration === 'number' && isFinite(video.duration) && video.duration > 0) {
+    if (clampedTime >= video.duration - 0.75) {
+      clampedTime = Math.max(0, video.duration - 0.75);
+    }
+  }
+
+  const player = getPlayer();
+  if (player && typeof player.seekTo === 'function') {
+    try {
+      player.seekTo(clampedTime, true);
+      return true;
+    } catch (e) {
+      console.warn('[Utils] player.seekTo failed, falling back to video.currentTime:', e);
+    }
+  }
+
+  if (video) {
+    try {
+      video.currentTime = clampedTime;
+      return true;
+    } catch (e) {
+      console.warn('[Utils] video.currentTime assignment failed:', e);
+    }
+  }
+  return false;
+}
 if (typeof window !== 'undefined') {
   window.addEventListener('ytaf-page-update', (e) => {
     // Drop the cache whenever we leave a video page; the next getVideo() call

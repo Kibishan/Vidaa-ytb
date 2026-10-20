@@ -142,7 +142,8 @@ const configOptions = new Map([
 
 // Register shortcut keys 0-9
 for (let i = 0; i < 10; i++) {
-  configOptions.set(`shortcut_key_${i}`, { default: i === 5 ? 'chapter_skip' : 'none', desc: `Key ${i} Action` });
+  const defaultAction = i === 0 ? 'config_menu' : i === 5 ? 'chapter_skip' : 'none';
+  configOptions.set(`shortcut_key_${i}`, { default: defaultAction, desc: `Key ${i} Action` });
 }
 
 // Register shortcut keys Red, Green, Blue

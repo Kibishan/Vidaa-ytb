@@ -4,7 +4,7 @@ import { showNotification } from './notifications.js';
 import sponsorBlockUI from './Sponsorblock-UI.js';
 import sponsorBlockLabels, { isFullVideoSegment } from './sponsorblock-labels.js';
 import { isLegacyWebOS } from './webos-utils.js';
-import { getVideo, waitForChildAdd } from './utils.js';
+import { getVideo, seekVideoTo, waitForChildAdd } from './utils.js';
 import './sponsorblock.css';
 
 const SPONSORBLOCK_CONFIG = {
@@ -86,6 +86,9 @@ class SponsorBlockHandler {
         this.activeCategories = new Set();
         this.isProcessing = false;
         this.isSkipping = false;
+        this.pendingSeekTarget = null;
+        this.lastSkipWallTime = 0;
+        this.segmentSkipTimestamps = new Map();
         this.isDestroyed = false;
         this.skippedSegmentIndices = new Set();
         this.tempWhitelistIndex = -1; // Whitelist segment when using shortcut
@@ -305,14 +308,29 @@ class SponsorBlockHandler {
 
         // Find the first segment that starts AFTER the current time, or contains current time.
         if (this.video && !isNaN(this.video.currentTime) && this.skipSegments.length > 0) {
-            const time = this.video.currentTime;
+            const time =
+                this.isSkipping && this.pendingSeekTarget !== null
+                    ? this.pendingSeekTarget
+                    : this.video.currentTime;
             
             // Check if we are currently inside a segment
             const currentIdx = this.findSegmentAtTime(time);
+            const now = Date.now();
             
             if (currentIdx !== -1) {
-                this.nextSegmentIndex = currentIdx;
-                this.nextSegmentStart = this.skipSegments[currentIdx].start;
+                const seg = this.skipSegments[currentIdx];
+                const lastSkippedAt = this.segmentSkipTimestamps.get(seg.originalIndex) || 0;
+                if (now - lastSkippedAt < 5000) {
+                    this.nextSegmentIndex = this.findNextSegmentIndex(seg.end);
+                    if (this.nextSegmentIndex < this.skipSegments.length) {
+                        this.nextSegmentStart = this.skipSegments[this.nextSegmentIndex].start;
+                    } else {
+                        this.nextSegmentStart = Infinity;
+                    }
+                } else {
+                    this.nextSegmentIndex = currentIdx;
+                    this.nextSegmentStart = seg.start;
+                }
             } else {
                 // Not in a segment, find the next one
                 this.nextSegmentIndex = this.findNextSegmentIndex(time);
@@ -346,8 +364,9 @@ class SponsorBlockHandler {
         while (left <= right) {
             const mid = (left + right) >>> 1;
             const seg = this.skipSegments[mid];
+            const endMargin = Math.min(0.25, Math.max(0.05, (seg.end - seg.start) * 0.15));
 
-            if (time >= seg.start && time < seg.end) {
+            if (time >= seg.start && time < seg.end - endMargin) {
                 return mid;
             } else if (time < seg.start) {
                 right = mid - 1;
@@ -458,20 +477,20 @@ class SponsorBlockHandler {
     }
 
     executeChainSkip(video) {
-        if (!video || this.hasPerformedChainSkip || this.isDestroyed) return false;
+        if (!video || this.hasPerformedChainSkip || this.isSkipping || this.isDestroyed) return false;
 
-        if (video.readyState === 0) {
+        if (video.readyState < 2 || video.paused || !video.duration || isNaN(video.duration)) {
             if (this.boundChainSkipRetry && this.chainSkipVideo) {
-                this.chainSkipVideo.removeEventListener('loadedmetadata', this.boundChainSkipRetry);
+                this.chainSkipVideo.removeEventListener('playing', this.boundChainSkipRetry);
             }
             this.chainSkipVideo = video;
             this.boundChainSkipRetry = () => {
-                video.removeEventListener('loadedmetadata', this.boundChainSkipRetry);
+                video.removeEventListener('playing', this.boundChainSkipRetry);
                 this.boundChainSkipRetry = null;
                 this.chainSkipVideo = null;
                 if (!this.isDestroyed) this.executeChainSkip(video);
             };
-            video.addEventListener('loadedmetadata', this.boundChainSkipRetry);
+            video.addEventListener('playing', this.boundChainSkipRetry);
             return false;
         }
 
@@ -486,19 +505,27 @@ class SponsorBlockHandler {
 
         this.log('info', `Executing chain skip: ${chain.chainDescription}`);
 
-        video.currentTime = chain.endTime;
-        this.lastSkipTime = chain.endTime;
+        const now = Date.now();
         this.hasPerformedChainSkip = true;
+        this.isSkipping = true;
+        this.pendingSeekTarget = chain.endTime;
+        this.lastSkipTime = video.currentTime;
+        this.lastSkipWallTime = now;
+        this._armSkipWatchdog();
         
         // Fast chronologically-sorted short-circuit skip mapping
         for (let i = 0; i < this.skipSegments.length; i++) {
             const seg = this.skipSegments[i];
             if (seg.start > chain.endTime) break; 
             
-           if (seg.mode === 'auto_skip' && seg.start < chain.endTime && seg.end <= chain.endTime + 0.1) {
+            if (seg.mode === 'auto_skip' && seg.start < chain.endTime && seg.end <= chain.endTime + 0.1) {
                 this.skippedSegmentIndices.add(seg.originalIndex);
+                this.segmentSkipTimestamps.set(seg.originalIndex, now);
             }
         }
+
+        this.resetSegmentTracking();
+        seekVideoTo(chain.endTime, video);
 
         this.requestAF(() => {
             const categories = chain.chainDescription.split(' → ')
@@ -630,8 +657,9 @@ class SponsorBlockHandler {
                 this.checkForProgressBar();
                 // Re-evaluate tracking (re-enables time listener if needed)
                 this.resetSegmentTracking();
-                this.hasPerformedChainSkip = false;
-                this.executeChainSkip(this.video);
+                if (!this.hasPerformedChainSkip && !this.isSkipping) {
+                    this.executeChainSkip(this.video);
+                }
             } else if (state === 2) { // PAUSED
                 this.stopHighFreqLoop();
                 this.toggleTimeListener(false);
@@ -655,18 +683,25 @@ class SponsorBlockHandler {
             if (this.isDestroyed) return;
             this._clearSkipWatchdog();
             this.stopHighFreqLoop();
-            this.hasPerformedChainSkip = false;
-            this.executeChainSkip(this.video);
 
-            if (!this.isSkipping) {
+            const wasSkipping = this.isSkipping;
+            this.isSkipping = false;
+            this.pendingSeekTarget = null;
+
+            if (!wasSkipping) {
+                if (this.video.currentTime <= CHAIN_SKIP_CONSTANTS.START_THRESHOLD) {
+                    this.hasPerformedChainSkip = false;
+                    this.executeChainSkip(this.video);
+                }
                 this.lastSkipTime = -1;
                 this.lastSkippedSegmentIndex = -1;
                 this.lastNotifiedSegmentIndex = -1;
                 this.resetSegmentTracking();
                 // Only handle time update immediately if not paused
                 if (!this.video.paused) this.handleTimeUpdate(); 
+            } else {
+                this.resetSegmentTracking();
             }
-            this.isSkipping = false;
         });
 
         this.addEvent(this.video, 'durationchange', () => {
@@ -680,6 +715,9 @@ class SponsorBlockHandler {
         this.addEvent(this.video, 'playing', () => {
             if (this.isDestroyed) return;
             this.resetSegmentTracking();
+            if (!this.hasPerformedChainSkip && !this.isSkipping) {
+                this.executeChainSkip(this.video);
+            }
         });
         this.addEvent(this.video, 'pause', () => {
             this.stopHighFreqLoop();
@@ -1043,8 +1081,8 @@ class SponsorBlockHandler {
                 segment.segment[1] = duration;
                 changed = true;
             }
-            if (this.isLegacyWebOSVer && segment.segment[1] >= duration - 0.5) {
-                segment.segment[1] = Math.max(0, duration - 0.30);
+            if (segment.segment[1] >= duration - 0.75) {
+                segment.segment[1] = Math.max(0, duration - 0.75);
                 changed = true;
             }
         }
@@ -1055,9 +1093,8 @@ class SponsorBlockHandler {
     }
 
     // Safety net: if the media pipeline swallows the 'seeked' event for a
-    // programmatic skip (buffer stalls / near-EOS quirks on webOS), clear the
-    // isSkipping latch so the timeupdate pipeline keeps working. Mirrors the
-    // 500ms fallback handleBlueButton already had, with headroom for slow seeks.
+    // programmatic skip (buffer stalls / near-EOS quirks on webOS/VIDAA), clear the
+    // isSkipping latch so the timeupdate pipeline keeps working.
     _armSkipWatchdog() {
         if (this._skipWatchdogTimer) clearTimeout(this._skipWatchdogTimer);
         this._skipWatchdogTimer = setTimeout(() => {
@@ -1065,9 +1102,10 @@ class SponsorBlockHandler {
             if (!this.isDestroyed && this.isSkipping) {
                 this.log('warn', "'seeked' never fired after skip — watchdog reset");
                 this.isSkipping = false;
+                this.pendingSeekTarget = null;
                 this.resetSegmentTracking();
             }
-        }, 1500);
+        }, 4500);
     }
 
     _clearSkipWatchdog() {
@@ -1126,7 +1164,17 @@ class SponsorBlockHandler {
             this.toggleTimeListener(false);
             return;
         }
-        if (this.isDestroyed || !this.video || this.video.seeking || this.video.readyState === 0) return;
+        if (
+            this.isDestroyed ||
+            !this.video ||
+            this.video.paused ||
+            this.video.seeking ||
+            this.video.readyState < 2 ||
+            !this.video.duration ||
+            isNaN(this.video.duration)
+        ) {
+            return;
+        }
 
         const currentTime = this.video.currentTime;
 
@@ -1138,19 +1186,6 @@ class SponsorBlockHandler {
 
         // Trust nextSegmentStart to avoid unnecessary searches
         const timeToNext = this.nextSegmentStart - currentTime;
-
-		// Removed sleep timer due to possible bugs with buffering/frame drops
-        // if (timeToNext > 3.0 && !this.currentManualSegment) {
-            // const sleepTime = timeToNext - 1.0;
-            // if (sleepTime > 1.0) {
-                // this.toggleTimeListener(false);
-                // this.longDistanceTimer = setTimeout(() => {
-                    // this.longDistanceTimer = null;
-                    // this.toggleTimeListener(true);
-                // }, sleepTime * 1000);
-                // return;
-            // }
-        // }
 
         if (timeToNext > 0 && !this.currentManualSegment) {
             if (timeToNext < 1.0 && !this.pollingRafId) {
@@ -1165,15 +1200,14 @@ class SponsorBlockHandler {
         const expectedSeg = this.skipSegments[this.nextSegmentIndex];
 
         if (expectedSeg && currentTime >= expectedSeg.start) {
-			// Only apply the 1.5s frame drop gap to auto_skip segments
-			const isAutoSkip = expectedSeg.mode === 'auto_skip';
-			if (currentTime < expectedSeg.end || (isAutoSkip && (currentTime - expectedSeg.end) < 1.5)) {
-				segmentIdx = this.nextSegmentIndex;
-			} else {
-				// Fallback to Binary Search
-				segmentIdx = this.findSegmentAtTime(currentTime);
-			}
-		}
+            const endMargin = Math.min(0.25, Math.max(0.05, (expectedSeg.end - expectedSeg.start) * 0.15));
+            if (currentTime < expectedSeg.end - endMargin) {
+                segmentIdx = this.nextSegmentIndex;
+            } else {
+                // Fallback to Binary Search
+                segmentIdx = this.findSegmentAtTime(currentTime);
+            }
+        }
 
         if (segmentIdx === -1) {
             // We aren't in a segment. Since resetSegmentTracking was correct, 
@@ -1230,14 +1264,29 @@ class SponsorBlockHandler {
             return;
         }
 
-        if (this.isLegacyWebOSVer &&
+        const nowWall = Date.now();
+        const lastSegSkipWall = this.segmentSkipTimestamps.get(seg.originalIndex) || 0;
+        if (nowWall - lastSegSkipWall < 5000) {
+            // Prevent re-triggering the same segment in a loop while MSE settles after seek
+            this.nextSegmentIndex = this.findNextSegmentIndex(seg.end);
+            if (this.nextSegmentIndex < this.skipSegments.length) {
+                this.nextSegmentStart = this.skipSegments[this.nextSegmentIndex].start;
+            } else {
+                this.nextSegmentStart = Infinity;
+                this.toggleTimeListener(false);
+            }
+            return;
+        }
+
+        if (
             segmentIdx === this.lastSkippedSegmentIndex &&
-            this.video.duration - currentTime < 1.0) {
+            this.video.duration - currentTime < 1.0
+        ) {
             return;
         }
 
         let jumpTarget = seg.end;
-		const categoryName = seg.categoryName;
+        const categoryName = seg.categoryName;
         const skippedCategories = [categoryName];
         const segmentsToMark = [seg.originalIndex];
 
@@ -1257,40 +1306,38 @@ class SponsorBlockHandler {
             segmentsToMark.push(next.originalIndex);
         }
 
-        if (segmentIdx === this.lastSkippedSegmentIndex && Math.abs(currentTime - this.lastSkipTime) < 0.1) {
+        if (segmentIdx === this.lastSkippedSegmentIndex && Math.abs(currentTime - this.lastSkipTime) < 0.25) {
+            return;
+        }
+
+        const duration = this.video.duration;
+        if (duration && isFinite(duration) && jumpTarget >= duration - 0.75) {
+            jumpTarget = Math.max(0, duration - 0.75);
+        }
+
+        if (jumpTarget <= currentTime + 0.2) {
             return;
         }
 
         this.lastSkipTime = currentTime;
         this.lastSkippedSegmentIndex = segmentIdx;
+        this.lastSkipWallTime = nowWall;
         
-        segmentsToMark.forEach(idx => { this.skippedSegmentIndices.add(idx); });
+        segmentsToMark.forEach(idx => {
+            this.skippedSegmentIndices.add(idx);
+            this.segmentSkipTimestamps.set(idx, nowWall);
+        });
 
-        if (this.isLegacyWebOSVer) {
-            const duration = this.video.duration;
-            if (jumpTarget >= duration - 0.5) {
-                jumpTarget = Math.max(0, duration - 0.25);
-            }
-        }
-
-        if (jumpTarget > currentTime + 0.05) {
-            this.isSkipping = true;
-            this._armSkipWatchdog();
-            this.video.currentTime = jumpTarget;
-        }
-
-        if (!this.isLegacyWebOSVer) {
-            const timeRemaining = this.video.duration - this.video.currentTime;
-            if (timeRemaining > 0.5 && this.video.paused) {
-                this.video.play();
-            }
-        }
+        this.isSkipping = true;
+        this.pendingSeekTarget = jumpTarget;
+        this._armSkipWatchdog();
+        seekVideoTo(jumpTarget, this.video);
 
         this.nextSegmentIndex = segmentIdx + 1;
         // Re-find next index properly via binary search just to be safe after a skip
         const targetSegIdx = this.findSegmentAtTime(jumpTarget);
         
-        if (targetSegIdx !== -1) {
+        if (targetSegIdx !== -1 && !segmentsToMark.includes(this.skipSegments[targetSegIdx].originalIndex)) {
             // We landed exactly inside a manual segment (or another adjacent segment)
             this.nextSegmentIndex = targetSegIdx;
             this.nextSegmentStart = this.skipSegments[targetSegIdx].start;
@@ -1326,7 +1373,11 @@ class SponsorBlockHandler {
         const mode = config.sbMode_highlight;
         if (!mode || mode === 'disable') return false;
 
-        this.video.currentTime = this.highlightSegment.segment[0];
+        const target = this.highlightSegment.segment[0];
+        this.isSkipping = true;
+        this.pendingSeekTarget = target;
+        this._armSkipWatchdog();
+        seekVideoTo(target, this.video);
         this.requestAF(() => showNotification('Jumped to Highlight'));
         return true;
     }
@@ -1347,7 +1398,10 @@ class SponsorBlockHandler {
     if (!targetSeg) return false;
     
     this.tempWhitelistIndex = targetSeg.originalIndex;
-    this.video.currentTime = targetSeg.start;
+    this.isSkipping = true;
+    this.pendingSeekTarget = targetSeg.start;
+    this._armSkipWatchdog();
+    seekVideoTo(targetSeg.start, this.video);
     
     const categoryName = this.getCategoryName(targetSeg.category);
     const title = categoryName.charAt(0).toUpperCase() + categoryName.slice(1);
@@ -1359,15 +1413,18 @@ class SponsorBlockHandler {
     handleBlueButton() {
         if (this.currentManualSegment) {
             if (this.video) {
+                const target = this.currentManualSegment.end;
                 this.isSkipping = true;
+                this.pendingSeekTarget = target;
                 this.lastSkipTime = this.video.currentTime;
-                this.video.currentTime = this.currentManualSegment.end;
+                this.lastSkipWallTime = Date.now();
+                this.segmentSkipTimestamps.set(this.currentManualSegment.originalIndex, Date.now());
+                this._armSkipWatchdog();
+                seekVideoTo(target, this.video);
 
                 this.clearManualNotification();
 
                 this.requestAF(() => showNotification('Skipped Segment'));
-
-                setTimeout(() => { this.isSkipping = false; }, 500);
                 return true;
             }
         }

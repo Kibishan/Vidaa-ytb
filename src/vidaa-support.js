@@ -216,6 +216,11 @@ export function installVidaaKeyNormalizer() {
       evt.preventDefault();
       evt.stopPropagation();
       dispatchNormalizedKey(evt.type, evt, 412, 'MediaRewind');
+    } else if ((code === 113 || code === 93 || code === 457) && !isTextInputFocused(evt.target)) {
+      // F2 (113), ContextMenu (93) ou Info/Menu TV (457) -> Bouton Vert (404) pour ouvrir le menu du mod
+      evt.preventDefault();
+      evt.stopPropagation();
+      dispatchNormalizedKey(evt.type, evt, 404, 'Green');
     }
   };
 

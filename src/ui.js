@@ -9,7 +9,7 @@ import { initVideoQuality } from './video-quality.js';
 import { initLogoStyle } from './logo-style.js';
 // import { initPlaybackSpeed, stepSpeed, resetSpeed } from './playback-speed.js';
 import sponsorBlockUI from './Sponsorblock-UI.js';
-import { sendKey, REMOTE_KEYS, COLOR_CODE_MAP, isGuestMode, isWatchPage, isShortsPage, isSearchPage, SELECTORS, getVideo } from './utils.js';
+import { sendKey, REMOTE_KEYS, COLOR_CODE_MAP, isGuestMode, isWatchPage, isShortsPage, isSearchPage, SELECTORS, getVideo, seekVideoTo } from './utils.js';
 import { syncAdblockHook, initTrackingBlock, destroyTrackingBlock } from './adblock.js';
 import logoBlueUrl from './icons/logo-blue.png';
 import logoRedUrl from './icons/logo-red.png';
@@ -865,7 +865,7 @@ async function skipChapter(direction = 'next') {
   }
 
   if (targetTime !== -1 && targetTime < video.duration) {
-    video.currentTime = targetTime;
+    seekVideoTo(targetTime, video);
     showNotification(direction === 'next' ? 'Next Chapter' : 'Previous Chapter');
     if (wasForcedNow) setTimeout(() => simulateBack(), 250);
   } else {
@@ -906,7 +906,7 @@ function performBurstSeek(seconds, video) {
     seekApplyTimer = setTimeout(() => {
         if (pendingSeekOffset !== 0) {
             // Apply the total calculated seek in one single operation
-            video.currentTime += pendingSeekOffset;
+            seekVideoTo(video.currentTime + pendingSeekOffset, video);
             pendingSeekOffset = 0;
         }
     }, 200); // 200ms buffer allows rapid key presses without freezing the UI
@@ -1496,6 +1496,10 @@ if (!menuKeyExists) {
     configWrite('shortcut_key_green', 'config_menu');
 }
 
+if (shortcutCache['0'] === 'none') {
+    configWrite('shortcut_key_0', 'config_menu');
+}
+
 // --- Start-up ---
 initGlobalStyles();
 initVideoQuality();
@@ -1540,4 +1544,4 @@ configAddChangeListener('videoShelfOpacity', () => {
 syncAdblockHook();
 syncTrackingBlock();
 
-setTimeout(() => showNotification('Press [GREEN] to open SponsorBlock configuration screen'), 2000);
+setTimeout(() => showNotification('Press [GREEN] or [0] to open SponsorBlock configuration screen'), 2000);

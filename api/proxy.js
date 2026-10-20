@@ -649,7 +649,42 @@ export default async function handleProxyRequest(req, res) {
       return;
     }
 
-    // 4. Réponse binaire ou JSON brute (avec Content-Length explicite pour SABR/videoplayback)
+    // 4. Réponse binaire ou JSON brute (streaming direct pour videoplayback/SABR afin d'éviter la latence et la limite mémoire Vercel lors d'un skip SponsorBlock)
+    const upstreamContentLength = upstreamRes.headers.get('content-length');
+    const upstreamContentEncoding = upstreamRes.headers.get('content-encoding');
+    if (
+      upstreamRes.body &&
+      typeof upstreamRes.body.getReader === 'function' &&
+      (targetUrl.pathname.includes('/videoplayback') ||
+        targetUrl.pathname.includes('/initplayback') ||
+        contentType.includes('vnd.yt-ump') ||
+        contentType.startsWith('video/') ||
+        contentType.startsWith('audio/'))
+    ) {
+      if (upstreamContentLength && !upstreamContentEncoding) {
+        res.setHeader('Content-Length', upstreamContentLength);
+      }
+      const reader = upstreamRes.body.getReader();
+      try {
+        while (true) {
+          if (req.destroyed || res.writableEnded) {
+            await reader.cancel();
+            break;
+          }
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value && value.byteLength > 0) {
+            res.write(Buffer.from(value));
+          }
+        }
+      } finally {
+        if (!res.writableEnded) {
+          res.end();
+        }
+      }
+      return;
+    }
+
     const arrayBuffer = await upstreamRes.arrayBuffer();
     const buf = Buffer.from(arrayBuffer);
     res.setHeader('Content-Length', String(buf.length));
