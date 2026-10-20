@@ -58,3 +58,9 @@ ytlr-tile-renderer[style*='width: 12.75rem; height: 21.25rem;']
   border-image: url('data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7')
     30%;
 }
+
+/* Hide YouTube TV non-youtube.com domain debug watermark on proxy origins */
+yt-debug-watermark,
+[idomkey='lazy-debug-watermark'] {
+  display: none !important;
+}

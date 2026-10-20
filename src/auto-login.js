@@ -19,29 +19,44 @@ let pageObserverAttached = false;
  */
 function disableWhosWatching(enable = true) {
   try {
+    const now = Date.now();
+    const targetDate = enable ? now + (7 * 24 * 60 * 60 * 1000) : now;
     const storedData = localStorage.getItem(STORAGE_KEY);
-    if (!storedData) return console.warn('Auto login: No recurring actions found');
+    let json;
 
-    const json = JSON.parse(storedData);
-    const actions = json.data?.data;
+    if (storedData) {
+      json = JSON.parse(storedData);
+    } else {
+      json = {
+        data: {
+          data: {},
+          idData: {},
+          lastPruned: now
+        },
+        e: now + (365 * 24 * 60 * 60 * 1000)
+      };
+    }
 
-    if (!actions) return;
-
-    // Use a future date if enabling, or Date.now() if disabling
-    const targetDate = enable ? Date.now() + (7 * 24 * 60 * 60 * 1000) : Date.now();
-    let isModified = false;
+    if (!json.data) json.data = { data: {}, idData: {}, lastPruned: now };
+    if (!json.data.data) json.data.data = {};
+    const actions = json.data.data;
 
     for (const key of TARGET_ACTIONS) {
-      if (actions[key]) {
+      if (!actions[key]) {
+        actions[key] = {
+          timesFired: 1,
+          earliestKnownTime: now,
+          lastFired: targetDate,
+          dailiesBitSet: 1,
+          dailiesTimestamp: now
+        };
+      } else {
         actions[key].lastFired = targetDate;
-        isModified = true;
       }
     }
 
-    if (isModified) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(json));
-      console.info(`Auto login: "Who's watching" screens ${enable ? 'disabled' : 'enabled'}`);
-    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(json));
+    console.info(`Auto login: "Who's watching" screens ${enable ? 'disabled' : 'enabled'}`);
   } catch (error) {
     console.error('Auto login: Failed to update settings:', error);
   }

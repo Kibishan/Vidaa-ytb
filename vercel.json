@@ -4,7 +4,7 @@
   "outputDirectory": "dist/vidaa",
   "rewrites": [
     {
-      "source": "/((?!vidaa\\.html$|index\\.html$|index\\.js$|manifest\\.json$|sw\\.js$|icon\\.png$|largeIcon\\.png$|appinfo\\.json$|webOSUserScripts/|installer/|api/).*)",
+      "source": "/((?!vidaa\\.html$|index\\.html$|index\\.js$|manifest\\.json$|sw\\.js$|icon\\.png$|largeIcon\\.png$|appinfo\\.json$|webOSUserScripts/|installer/|api/proxy$).*)",
       "destination": "/api/proxy"
     }
   ],

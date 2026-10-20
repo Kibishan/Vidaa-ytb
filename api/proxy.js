@@ -36,6 +36,7 @@ const STATIC_MIME_TYPES = {
 function buildClientBootstrapScript(nonceAttr) {
   return `<meta id="app-viewport" name="viewport" content="width=1920, height=1080, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
 <link rel="manifest" href="/manifest.json" />
+<style${nonceAttr}>yt-debug-watermark, [idomkey="lazy-debug-watermark"] { display: none !important; }</style>
 <script${nonceAttr}>
 (function bootstrapYoutubeVidaa() {
   window.__ORIGINAL_USER_AGENT__ = navigator.userAgent || "";
@@ -53,6 +54,22 @@ function buildClientBootstrapScript(nonceAttr) {
       get: function () { return smartTvUA; },
       configurable: true
     });
+  } catch (e) {}
+
+  try {
+    var recKey = "yt.leanback.default::recurring_actions";
+    var now = Date.now();
+    var future = now + 7 * 24 * 60 * 60 * 1000;
+    var rawRec = localStorage.getItem(recKey);
+    var recObj = rawRec ? JSON.parse(rawRec) : { data: { data: {}, idData: {}, lastPruned: now }, e: now + 365 * 24 * 60 * 60 * 1000 };
+    if (!recObj.data) recObj.data = { data: {}, idData: {}, lastPruned: now };
+    if (!recObj.data.data) recObj.data.data = {};
+    var actions = ["startup-screen-account-selector-with-guest", "whos_watching_fullscreen_zero_accounts", "startup-screen-signed-out-welcome-back"];
+    for (var i = 0; i < actions.length; i++) {
+      var k = actions[i];
+      recObj.data.data[k] = { timesFired: 1, earliestKnownTime: now, lastFired: future, dailiesBitSet: 1, dailiesTimestamp: now };
+    }
+    localStorage.setItem(recKey, JSON.stringify(recObj));
   } catch (e) {}
 
   if (!window.location.hash || window.location.hash === "#") {
@@ -78,7 +95,8 @@ function buildClientBootstrapScript(nonceAttr) {
     "i9.ytimg.com": true,
     "clients1.google.com": true,
     "play.google.com": true,
-    "youtubei.googleapis.com": true
+    "youtubei.googleapis.com": true,
+    "redirector.googlevideo.com": true
   };
 
   var SAME_ORIGIN_YT_HOSTS = {
@@ -92,16 +110,19 @@ function buildClientBootstrapScript(nonceAttr) {
     if (rawUrl.indexOf("/cors-bypass/") === 0 || rawUrl.indexOf("data:") === 0 || rawUrl.indexOf("blob:") === 0) {
       return rawUrl;
     }
+    if (rawUrl.indexOf("/eligibility_check") !== -1 || rawUrl.indexOf("panelresearch.googlevideo.com") !== -1) {
+      return "data:application/json,{}";
+    }
     var normalized = rawUrl.indexOf("//") === 0 ? window.location.protocol + rawUrl : rawUrl;
     if (normalized.indexOf("http://") !== 0 && normalized.indexOf("https://") !== 0) {
       return rawUrl;
     }
     try {
       var parsed = new URL(normalized);
-      if ( parsed.origin === window.location.origin ) {
+      if (parsed.origin === window.location.origin) {
         return rawUrl;
       }
-      if (SAME_ORIGIN_YT_HOSTS[parsed.hostname]) {
+      if (parsed.host === window.location.host || SAME_ORIGIN_YT_HOSTS[parsed.hostname]) {
         return parsed.pathname + parsed.search + parsed.hash;
       }
       if (CORS_PROXY_HOSTS[parsed.hostname]) {
@@ -228,7 +249,13 @@ function resolveUpstreamUrl(reqUrl) {
     return { targetUrl, isTvHtmlEntry: true };
   }
 
-  // 3. Toutes les autres routes YouTube (/youtubei/*, /s/*, /api/*, etc.)
+  // 3. Autocomplete Google (/complete/search)
+  if (pathname.startsWith('/complete/')) {
+    const targetUrl = new URL(pathname + parsed.search, 'https://clients1.google.com');
+    return { targetUrl, isTvHtmlEntry: false };
+  }
+
+  // 4. Toutes les autres routes YouTube (/youtubei/*, /s/*, /api/*, etc.)
   const targetUrl = new URL(pathname + parsed.search, YT_ORIGIN);
   return { targetUrl, isTvHtmlEntry: false };
 }
@@ -335,11 +362,12 @@ export default async function handleProxyRequest(req, res) {
 
   try {
     const body = await readRequestBody(req);
+    const isCorsBypass = pathname.startsWith('/cors-bypass/');
     const upstreamRes = await fetch(targetUrl.toString(), {
       method: req.method,
       headers: upstreamHeaders,
       body,
-      redirect: 'manual'
+      redirect: isCorsBypass ? 'follow' : 'manual'
     });
 
     // Gestion des redirections upstream
@@ -441,10 +469,23 @@ export default async function handleProxyRequest(req, res) {
       return;
     }
 
-    // 2. Transformation des bundles JS de YouTube TV (kabuki base.js)
+    // 2. Transformation des feuilles de style CSS (/s/_/kabuki/_/ss/) pour que les polices/icônes passent par /cors-bypass/
+    if (contentType.includes('text/css') || targetUrl.pathname.includes('/s/_/kabuki/_/ss/')) {
+      let css = await upstreamRes.text();
+      css = css
+        .replace(/url\((['"]?)\/\/www\.gstatic\.com\//g, 'url($1/cors-bypass/https://www.gstatic.com/')
+        .replace(/url\((['"]?)https:\/\/www\.gstatic\.com\//g, 'url($1/cors-bypass/https://www.gstatic.com/')
+        .replace(/url\((['"]?)\/\/fonts\.gstatic\.com\//g, 'url($1/cors-bypass/https://fonts.gstatic.com/')
+        .replace(/url\((['"]?)https:\/\/fonts\.gstatic\.com\//g, 'url($1/cors-bypass/https://fonts.gstatic.com/');
+      res.setHeader('Content-Type', 'text/css; charset=utf-8');
+      res.end(css);
+      return;
+    }
+
+    // 3. Transformation des bundles JS de YouTube TV (kabuki base.js uniquement, jamais le CSS /ss/)
     if (
-      (contentType.includes('javascript') || targetUrl.pathname.includes('/s/_/kabuki/')) &&
-      targetUrl.pathname.includes('/s/_/kabuki/')
+      targetUrl.pathname.includes('/s/_/kabuki/_/js/') &&
+      !contentType.includes('text/css')
     ) {
       let js = await upstreamRes.text();
       js = js
