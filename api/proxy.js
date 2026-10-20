@@ -158,35 +158,23 @@ function buildClientBootstrapScript(nonceAttr) {
   window.__rewriteYoutubeVidaaUrl = rewriteRequestUrl;
 
   try {
-    if (typeof HTMLLinkElement !== "undefined") {
-      var linkDesc = Object.getOwnPropertyDescriptor(HTMLLinkElement.prototype, "href");
-      if (linkDesc && linkDesc.set) {
-        Object.defineProperty(HTMLLinkElement.prototype, "href", {
-          get: linkDesc.get,
-          set: function (val) {
-            if (typeof val === "string" && val.indexOf("/s/_/kabuki/_/ss/") !== -1 && val.indexOf("_cb=") === -1) {
-              val += (val.indexOf("?") === -1 ? "?" : "&") + "_cb=vidaa2";
-            }
-            return linkDesc.set.call(this, val);
-          },
-          configurable: true
-        });
+    function bustCssLink(el) {
+      if (!el || el.tagName !== "LINK") return;
+      var h = el.getAttribute("href");
+      if (h && h.indexOf("/s/_/kabuki/_/ss/") !== -1 && h.indexOf("_cb=") === -1) {
+        el.setAttribute("href", h + (h.indexOf("?") === -1 ? "?" : "&") + "_cb=vidaa2");
       }
     }
-    if (typeof Element !== "undefined" && Element.prototype.setAttribute) {
-      var origSetAttr = Element.prototype.setAttribute;
-      Element.prototype.setAttribute = function (name, val) {
-        if (
-          name &&
-          name.toLowerCase() === "href" &&
-          typeof val === "string" &&
-          val.indexOf("/s/_/kabuki/_/ss/") !== -1 &&
-          val.indexOf("_cb=") === -1
-        ) {
-          val += (val.indexOf("?") === -1 ? "?" : "&") + "_cb=vidaa2";
+    if (typeof MutationObserver !== "undefined") {
+      var cssObs = new MutationObserver(function (mutations) {
+        for (var i = 0; i < mutations.length; i++) {
+          var added = mutations[i].addedNodes;
+          for (var j = 0; j < added.length; j++) {
+            bustCssLink(added[j]);
+          }
         }
-        return origSetAttr.call(this, name, val);
-      };
+      });
+      cssObs.observe(document.documentElement, { childList: true, subtree: true });
     }
   } catch (e) {}
 
